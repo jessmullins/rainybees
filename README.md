@@ -162,9 +162,9 @@ Key packages and their roles:
 
 If you use these data or code, please cite:
 
-> Mullins J et al. (*in prep*). [Manuscript title]. *[Journal]*.
+> Mullins J et al. (*in prep*). Variable precipitation interacts with land-use change to affect the diversity and composition of native bee assemblages 
 >
-> Occurrence data: [Author list] (2024). Bee assemblages in scrub habitats in southwestern San Diego, California. GBIF occurrence dataset. https://doi.org/10.15468/74ktmt
+> Occurrence data: Hung, K-L. J; Mullins, JL. (2024). Bee assemblages in scrub habitats in southwestern San Diego, California. GBIF occurrence dataset. https://doi.org/10.15468/74ktmt
 
 ---
 
