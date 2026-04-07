@@ -1,5 +1,5 @@
 ## =============================================================================
-## R-08_body_size.R
+## R-07_body_size.R
 ##
 ## Purpose : Test Prediction 4 — assemblage body size increases with winter
 ##           precipitation. Coverage-standardized abundance-weighted and
@@ -113,9 +113,7 @@ allbees_bowl <- df_analysis %>%
     Count = as.numeric(individualCount)
   ) %>%
   filter(
-    year             %in% survey_years,
-    !scientificName  %in% indicators,   # remove to test indicator species effect
-    Type             %in% l_types
+   # !scientificName  %in% indicators,   # remove to test indicator species effect
   ) %>%
   mutate(Type = factor(Type))
 
@@ -148,11 +146,11 @@ precip_itd <- precip_itd %>%
 # =============================================================================
 
 body_long <- allbees_bowl %>%
-  filter(!is.na(itd_species_mean)) %>%
+  filter(!is.na(itd)) %>%
   group_by(fieldNumber, year, Type, scientificName) %>%
   summarise(
     Count = sum(individualCount, na.rm = TRUE),
-    itd   = mean(itd_species_mean, na.rm = TRUE),
+    itd   = mean(itd, na.rm = TRUE),
     .groups = "drop"
   ) %>%
   rename(Plot = fieldNumber)
@@ -283,17 +281,20 @@ fit_itd_models_interaction <- function(df, response) {
 
   df_mod <- df %>%
     drop_na(.data[[response]], Plot, Type, same_c, previous1_c) %>%
-    mutate(Type = fct_relevel(factor(Type), "Reserve", "Fragment"),
-           Plot = factor(Plot))
+    mutate(
+      Type = fct_relevel(factor(Type), "Reserve", "Fragment"),
+      Plot = factor(Plot),
+      response_log = log(.data[[response]])
+    )
 
   m_full_reml    <- lmer(reformulate(c("Type * previous1_c", "Type * same_c", "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_no_prev_reml <- lmer(reformulate(c("Type * same_c",      "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_no_same_reml <- lmer(reformulate(c("Type * previous1_c", "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_base_reml    <- lmer(reformulate(c("Type",               "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
 
   m_full_ml    <- update(m_full_reml,    REML = FALSE)
   m_no_prev_ml <- update(m_no_prev_reml, REML = FALSE)
@@ -332,16 +333,17 @@ fit_itd_models_additive <- function(df, response) {
   df_mod <- df %>%
     drop_na(.data[[response]], Plot, Type, same_c, previous1_c) %>%
     mutate(Type = fct_relevel(factor(Type), "Reserve", "Fragment"),
-           Plot = factor(Plot))
+           Plot = factor(Plot),
+           response_log = log(.data[[response]]))
 
   m_full_reml    <- lmer(reformulate(c("Type", "previous1_c", "same_c", "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_no_prev_reml <- lmer(reformulate(c("Type", "same_c",      "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_no_same_reml <- lmer(reformulate(c("Type", "previous1_c", "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_base_reml    <- lmer(reformulate(c("Type",                "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
 
   m_full_ml    <- update(m_full_reml,    REML = FALSE)
   m_no_prev_ml <- update(m_no_prev_reml, REML = FALSE)
@@ -379,16 +381,17 @@ fit_itd_models_notype <- function(df, response) {
 
   df_mod <- df %>%
     drop_na(.data[[response]], Plot, same_c, previous1_c) %>%
-    mutate(Plot = factor(Plot))
+    mutate(Plot = factor(Plot),
+           response_log = log(.data[[response]]))
 
   m_full_reml    <- lmer(reformulate(c("previous1_c", "same_c", "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_no_prev_reml <- lmer(reformulate(c("same_c",      "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_no_same_reml <- lmer(reformulate(c("previous1_c", "(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
   m_base_reml    <- lmer(reformulate(c("(1|Plot)"),
-                                     response = response), data = df_mod, REML = TRUE)
+                                     response = "response_log"), data = df_mod, REML = TRUE)
 
   m_full_ml    <- update(m_full_reml,    REML = FALSE)
   m_no_prev_ml <- update(m_no_prev_reml, REML = FALSE)
@@ -441,6 +444,10 @@ itd_weighted_frag   <- itd_weighted   %>% filter(Type == "Fragment")
 itd_unweighted_res  <- itd_unweighted %>% filter(Type == "Reserve")
 itd_unweighted_frag <- itd_unweighted %>% filter(Type == "Fragment")
 
+# Note: type-split models may produce singular fits (random effect variance = 0)
+# because splitting by habitat type reduces within-plot replication substantially.
+# Fixed effect estimates remain valid; R² values should be interpreted with caution.
+# These analyses are reported in the supplementary materials.
 itd_fit_res      <- fit_itd_models_notype(itd_weighted_res,    "avg_itd_cov")
 itd_fit_frag     <- fit_itd_models_notype(itd_weighted_frag,   "avg_itd_cov")
 itd_fit_res_uw   <- fit_itd_models_notype(itd_unweighted_res,  "avg_itd_cov_unw")
@@ -680,3 +687,4 @@ writexl::write_xlsx(
 message("\n--- Body size analysis complete ---")
 message("Figures written to: ", figures_dir)
 message("Results written to: ", results_dir)
+
