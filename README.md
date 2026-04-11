@@ -2,7 +2,7 @@
 
 **Variable precipitation interacts with land-use change to affect the diversity and composition of native bee assemblages**
 
-Jessica L. Mullins, Keng-Lou James Hung, Joel Gardner, John S. Ascher, David A. Holway | *in preparation for Ecology*
+Jessica L. Mullins, Keng-Lou James Hung, Joel Gardner, John S. Ascher, David A. Holway | *in review at Ecology*
 
 ---
 
