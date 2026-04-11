@@ -98,8 +98,8 @@ indicators <- c("Halictus farinosus", "Lasioglossum sisymbrii",
                 "Perdita claypolei australior")
 
 # Filter indicators for sensitivity analysis — comment out to include all species
-# df <- df %>%
- # filter(!scientificName %in% indicators)
+df <- df %>%
+  filter(!scientificName == "Perdita")
 
 # =============================================================================
 # SECTION 2 — Build community matrices

@@ -6,3 +6,5 @@ rainybees.Rproj
 data/cleaned/
 figures/
 results/
+*.png
+*.pdf

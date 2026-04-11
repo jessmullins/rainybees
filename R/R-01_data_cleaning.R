@@ -23,7 +23,7 @@
 ##           data/cleaned/target_coverage.rds    — shared coverage target scalar
 ##
 ## Author  : Jessica Mullins
-## Date    : April 2026
+## Date    : April 8, 2026
 ## =============================================================================
 
 suppressPackageStartupMessages({
@@ -459,5 +459,5 @@ message("Assemblages (site_year):     ", nrow(comm_abun))
 message("Species (full matrix):       ", ncol(comm_abun))
 message("Species (rarefied matrix):   ", ncol(comm_rare))
 message("Target coverage:             ", round(target_coverage, 4))
-message("Total records (df_analysis): ", nrow(df_analysis))
+message("Total records (df_analysis): ", sum(df_analysis$Count))
 message("Files written to:            ", cleaned_dir)
