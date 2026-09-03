@@ -22,3 +22,4 @@ results/
 R/R-00_station_setup.R
 R/R-09-speciesAbundance.R
 R/r10-lol.R
+*.ai
