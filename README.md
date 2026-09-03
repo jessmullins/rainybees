@@ -4,7 +4,7 @@
 
 Jessica L. Mullins, Keng-Lou James Hung, Joel Gardner, John S. Ascher, David A. Holway | *in review at Ecology*
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14567890.svg)](https://doi.org/10.5281/zenodo.14567890)
+[![DOI](https://zenodo.org/badge/1192999926.svg)](https://doi.org/10.5281/zenodo.19450450)
 
 ---
 
