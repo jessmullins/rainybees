@@ -106,7 +106,7 @@ df_sites <- read.csv(sites_file)
 ## =============================================================================
 
 df_gbif <- df_gbif %>%
-  left_join(df_sites %>% select(fieldNumber, Type), by = "fieldNumber")
+  left_join(df_sites %>% dplyr::select(fieldNumber, Type), by = "fieldNumber")
 
 df_gbif <- df_gbif %>%
   mutate(fieldNumber = case_when(
@@ -205,7 +205,7 @@ df_traits <- read.csv(traits_file)
 df_gbif2 <- df_gbif2 %>%
   left_join(
     df_traits %>%
-      select(scientificName, itd, diet, excavator, nestloc, soc, range_km2),
+      dplyr::select(scientificName, itd, diet, excavator, nestloc, soc, range_km2),
     by = "scientificName"
   )
 
@@ -265,7 +265,7 @@ df_traps <- df_sampling_rounds %>%
     year  = as.integer(str_extract(site_year, "\\d{4}")),
     traps = if_else(year %in% c(2011L, 2012L), 30L, 15L)
   ) %>%
-  select(site_year, traps)
+  dplyr::select(site_year, traps)
 
 df_gbif2 <- df_gbif2 %>%
   left_join(df_sampling_rounds, by = "site_year") %>%
@@ -277,7 +277,7 @@ df_gbif2 <- df_gbif2 %>%
 ## =============================================================================
 
 df_analysis <- df_gbif2 %>%
-  select(
+  dplyr::select(
     catalogNumber, family, genus, specificEpithet, scientificName,
     year, eventDate, fieldNumber, sex, individualCount, samplingProtocol,
     decimalLatitude, decimalLongitude, Type, site_year, itd, diet,
@@ -330,7 +330,7 @@ comm_mat <- as.matrix(comm_abun)
 
 abundance_list <- lapply(1:nrow(comm_mat), function(i) {
   x <- comm_mat[i, ]
-  as.numeric(x[x > 0])
+  x[x > 0]   # keep as a NAMED numeric vector -- do not strip names with as.numeric()
 })
 names(abundance_list) <- rownames(comm_mat)
 
@@ -341,7 +341,7 @@ inext_out <- iNEXT(abundance_list, q = 0, datatype = "abundance")
 
 # Extract observed coverage per assemblage
 observed_coverage <- inext_out$DataInfo %>%
-  select(Assemblage, SC) %>%
+  dplyr::select(Assemblage, SC) %>%
   rename(site_year = Assemblage, coverage = SC)
 
 target_coverage <- min(observed_coverage$coverage)
@@ -461,3 +461,41 @@ message("Species (rarefied matrix):   ", ncol(comm_rare))
 message("Target coverage:             ", round(target_coverage, 4))
 message("Total records (df_analysis): ", sum(df_analysis$Count))
 message("Files written to:            ", cleaned_dir)
+
+## =============================================================================
+## SECTION 16 — Collection summary stats for methods paragraph
+## =============================================================================
+
+# Total specimens (including Apis mellifera, before any exclusions)
+n_total <- sum(df_analysis$Count, na.rm = TRUE)
+
+# Excluding Apis mellifera
+df_no_apis <- df_analysis %>%
+  filter(scientificName != "Apis mellifera")
+
+n_specimens <- sum(df_no_apis$Count, na.rm = TRUE)
+n_species   <- n_distinct(df_no_apis$scientificName[grepl(" ", df_no_apis$scientificName)])
+n_genera    <- n_distinct(df_no_apis$genus)
+n_families  <- n_distinct(df_no_apis$family)
+
+# Species-level IDs: clean binomials only (no subspecies, morphospecies etc.)
+n_species_level <- df_no_apis %>%
+  filter(grepl("^[A-Z][a-z]+ [a-z]+$", scientificName)) %>%
+  summarise(n = sum(Count, na.rm = TRUE)) %>%
+  pull(n)
+
+# Genus-only records
+n_genus_only <- df_no_apis %>%
+  filter(!grepl(" ", scientificName)) %>%
+  summarise(n = sum(Count, na.rm = TRUE)) %>%
+  pull(n)
+
+cat("\n--- Collection summary ---\n")
+cat("Total specimens (excl. Apis mellifera):", n_specimens, "\n")
+cat("Species:                               ", n_species,   "\n")
+cat("Genera:                                ", n_genera,    "\n")
+cat("Families:                              ", n_families,  "\n")
+cat("Species-level IDs (n):                 ", n_species_level, "\n")
+cat("Species-level IDs (%):                 ", round(100 * n_species_level / n_specimens, 1), "\n")
+cat("Genus-only (n):                        ", n_genus_only, "\n")
+cat("Genus-only (%):                        ", round(100 * n_genus_only / n_specimens, 1), "\n")

@@ -26,8 +26,8 @@
 ##           (mm) used in all body size analyses. Values are from traits.csv,
 ##           derived from field measurements by the authors and collaborators.
 ##
-## Author  : [Your name]
-## Date    : [Date]
+## Author  : Jess Mullins
+## Date    : 10-April-2026
 ## =============================================================================
 
 suppressPackageStartupMessages({
@@ -44,6 +44,7 @@ suppressPackageStartupMessages({
   library(writexl)
   library(DHARMa)
   library(MASS)
+  library(MuMIn)   # AICc(), small-sample-corrected model comparison
 })
 
 set.seed(123)
@@ -68,26 +69,14 @@ n_iter_sc    <- 999
 target_SC <- readRDS(file.path(cleaned_dir, "target_coverage.rds"))
 cat("Loaded target coverage from R-01:", round(target_SC, 4), "\n")
 
-indicators <- c("Halictus farinosus", "Lasioglossum sisymbrii",
-                "Augochlorella pomoniella", "Eucera dorsata", "Eucera tricinctella",
-                "Lasioglossum punctatoventre", "Lasioglossum robustum",
-                "Megachile subnigra", "Melissodes plumosus", "Anthidium jocosum",
-                "Ceratina nanula", "Lasioglossum MSN turgiventre",
-                "Lasioglossum perparvum", "Melissodes tessellatus",
-                "Micralictoides ruficaudus", "Andrena osmioides",
-                "Perdita interrupta interrupta", "Dianthidium dubium",
-                "Dufourea sandhouseae", "Andrena ablegata",
-                "Dianthidium pudicum consimile", "Megachile coquilletti",
-                "Osmia gabrielis", "Anthophorula torticornis", "Bombus vosnesenskii",
-                "Lasioglossum titusi", "Lasioglossum actinosum",
-                "Lasioglossum stictaspis complex", "Osmia granulosa",
-                "Halictus ligatus", "Bombus californicus", "Osmia clarescens",
-                "Hylaeus mesillae cressoni", "Diadasia opuntiae",
-                "Calliopsis obscurella", "Hesperapis fuchsi", "Melissodes stearnsi",
-                "Ashmeadiella californica", "Dufourea rhamni", "Andrena atypica",
-                "Lasioglossum perichlarum", "Megachile onobrychidis",
-                "Dufourea brevicornis", "Melissodes velutinus", "Diadasia ochracea",
-                "Perdita claypolei australior")
+indicators <- readRDS(file.path(cleaned_dir, "indicator_species.rds"))
+
+
+df_analysis <- read.csv(file.path(cleaned_dir, "df_analysis.csv"),
+                        check.names = FALSE)
+
+# Filter out indicators - hash out to keep them in
+df_analysis %>% filter(!scientificName %in% indicators)
 
 # =============================================================================
 # SECTION 2 — Load data
@@ -95,9 +84,6 @@ indicators <- c("Halictus farinosus", "Lasioglossum sisymbrii",
 # df_analysis already has itd_species_mean joined per specimen from R-01.
 # No need to load separate ITD files.
 # =============================================================================
-
-df_analysis <- read.csv(file.path(cleaned_dir, "df_analysis.csv"),
-                        check.names = FALSE)
 
 precip_raw <- read.csv(file.path(cleaned_dir, "precipyrs.csv"),
                        check.names = FALSE)
@@ -113,7 +99,7 @@ allbees_bowl <- df_analysis %>%
     Count = as.numeric(individualCount)
   ) %>%
   filter(
-   # !scientificName  %in% indicators,   # remove to test indicator species effect
+    # !scientificName  %in% indicators,   # remove to test indicator species effect
   ) %>%
   mutate(Type = factor(Type))
 
@@ -165,22 +151,22 @@ calc_itd_rarefied <- function(counts, itd_vec) {
   N        <- sum(counts)
   info     <- iNEXT::DataInfo(counts, datatype = "abundance")
   chat_obs <- as.numeric(info$SC)
-
+  
   if (is.na(chat_obs) || N <= 1) {
     return(list(aw_itd = NA_real_, coverage_obs = chat_obs,
                 N = N, n_target = NA_real_))
   }
-
+  
   n_target <- if (chat_obs <= target_SC) N else N * (target_SC / chat_obs)
   n_target <- max(1L, min(N, round(n_target)))
-
+  
   aw_vals <- numeric(n_iter_sc)
   for (i in seq_len(n_iter_sc)) {
     rar <- vegan::rrarefy(counts, sample = n_target)
     rel <- rar / sum(rar)
     aw_vals[i] <- sum(rel * itd_vec, na.rm = TRUE)
   }
-
+  
   list(aw_itd = mean(aw_vals, na.rm = TRUE), coverage_obs = chat_obs,
        N = N, n_target = n_target)
 }
@@ -191,22 +177,22 @@ calc_itd_rarefied_unw <- function(counts, itd_vec) {
   N        <- sum(counts)
   info     <- iNEXT::DataInfo(counts, datatype = "abundance")
   chat_obs <- as.numeric(info$SC)
-
+  
   if (is.na(chat_obs) || N <= 1) {
     return(list(uw_itd = NA_real_, coverage_obs = chat_obs,
                 N = N, n_target = NA_real_))
   }
-
+  
   n_target <- if (chat_obs <= target_SC) N else N * (target_SC / chat_obs)
   n_target <- max(1L, min(N, round(n_target)))
-
+  
   uw_vals <- numeric(n_iter_sc)
   for (i in seq_len(n_iter_sc)) {
     rar  <- vegan::rrarefy(counts, sample = n_target)
     pres <- rar > 0
     uw_vals[i] <- if (!any(pres)) NA_real_ else mean(itd_vec[pres], na.rm = TRUE)
   }
-
+  
   list(uw_itd = mean(uw_vals, na.rm = TRUE), coverage_obs = chat_obs,
        N = N, n_target = n_target)
 }
@@ -245,7 +231,7 @@ itd_unweighted <- itd_cov_unw_tbl %>% left_join(precip_itd, by = "year")
 # =============================================================================
 
 col_vals   <- c(Reserve = "#2C7C4D", Fragment = "#BDBDBD")
-shape_vals <- c(Reserve = 15,        Fragment = 16)
+shape_vals <- c(Reserve = 17,        Fragment = 16)
 
 theme_panel <- theme_classic(base_size = 13) +
   theme(legend.position    = "right",
@@ -278,7 +264,7 @@ annotate_tp <- function(anova_tbl,
 
 # 9a) Interaction models: Type × precip (MAIN analysis)
 fit_itd_models_interaction <- function(df, response) {
-
+  
   df_mod <- df %>%
     drop_na(.data[[response]], Plot, Type, same_c, previous1_c) %>%
     mutate(
@@ -286,7 +272,7 @@ fit_itd_models_interaction <- function(df, response) {
       Plot = factor(Plot),
       response_log = log(.data[[response]])
     )
-
+  
   m_full_reml    <- lmer(reformulate(c("Type * previous1_c", "Type * same_c", "(1|Plot)"),
                                      response = "response_log"), data = df_mod, REML = TRUE)
   m_no_prev_reml <- lmer(reformulate(c("Type * same_c",      "(1|Plot)"),
@@ -295,28 +281,95 @@ fit_itd_models_interaction <- function(df, response) {
                                      response = "response_log"), data = df_mod, REML = TRUE)
   m_base_reml    <- lmer(reformulate(c("Type",               "(1|Plot)"),
                                      response = "response_log"), data = df_mod, REML = TRUE)
-
+  m_null_reml    <- lmer(reformulate("(1|Plot)",
+                                     response = "response_log"), data = df_mod, REML = TRUE)
+  # m_null: true null model (random effect only, no fixed effects) -- distinct
+  # from m_base, which still includes Type as a fixed effect
+  
+  # --- Reviewer-requested addition: year as a random effect ------------------
+  # WPy0/WPy0-1 are year-level predictors -- every site sampled in a given
+  # year shares the same value -- so treating site-years as independent
+  # overstates the effective sample size for the precipitation effect.
+  # (1 | year) forces that effect to be estimated from genuine between-year
+  # variation (~7 years). Expect wider CIs / possibly weaker significance for
+  # WPy0 and WPy0-1 specifically -- that is the correction working correctly.
+  m_full_year_reml <- lmer(reformulate(c("Type * previous1_c", "Type * same_c",
+                                         "(1|Plot)", "(1|year)"),
+                                       response = "response_log"), data = df_mod, REML = TRUE)
+  singular_year <- lme4::isSingular(m_full_year_reml)
+  
+  anova_full      <- car::Anova(m_full_reml,      type = 3)
+  anova_full_year <- car::Anova(m_full_year_reml, type = 3)
+  
+  compare_year_re <- {
+    a1 <- as.data.frame(anova_full)      %>% tibble::rownames_to_column("term")
+    a2 <- as.data.frame(anova_full_year) %>% tibble::rownames_to_column("term")
+    dplyr::full_join(
+      a1 %>% dplyr::select(term, Chisq_no_year = Chisq, P_no_year = `Pr(>Chisq)`),
+      a2 %>% dplyr::select(term, Chisq_with_year = Chisq, P_with_year = `Pr(>Chisq)`),
+      by = "term"
+    )
+  }
+  cat("\nSingular fit (year RE model)?", singular_year, "\n")
+  print(compare_year_re)
+  
   m_full_ml    <- update(m_full_reml,    REML = FALSE)
   m_no_prev_ml <- update(m_no_prev_reml, REML = FALSE)
   m_no_same_ml <- update(m_no_same_reml, REML = FALSE)
   m_base_ml    <- update(m_base_reml,    REML = FALSE)
-
+  m_null_ml    <- update(m_null_reml,    REML = FALSE)
+  m_full_year_ml <- update(m_full_year_reml, REML = FALSE)
+  
+  # --- Clean 4-model AICc comparison, ALL with (1|year) ----------------------
+  # Mirrors the diversity models' AICc table structure: full, prev-only,
+  # same-only, null, every candidate consistently specified with year as a
+  # random effect (not a mix of with/without).
+  m_no_prev_year_reml <- lmer(reformulate(c("Type * same_c", "(1|Plot)", "(1|year)"),
+                                          response = "response_log"), data = df_mod, REML = TRUE)
+  m_no_same_year_reml <- lmer(reformulate(c("Type * previous1_c", "(1|Plot)", "(1|year)"),
+                                          response = "response_log"), data = df_mod, REML = TRUE)
+  m_null_year_reml     <- lmer(reformulate(c("(1|Plot)", "(1|year)"),
+                                           response = "response_log"), data = df_mod, REML = TRUE)
+  
+  m_no_prev_year_ml <- update(m_no_prev_year_reml, REML = FALSE)
+  m_no_same_year_ml <- update(m_no_same_year_reml, REML = FALSE)
+  m_null_year_ml    <- update(m_null_year_reml,    REML = FALSE)
+  
+  aic_year_only <- MuMIn::AICc(m_full_year_ml, m_no_prev_year_ml,
+                               m_no_same_year_ml, m_null_year_ml) %>%
+    as.data.frame() %>% tibble::rownames_to_column("Model") %>%
+    dplyr::mutate(Model = dplyr::recode(Model,
+                                        "m_full_year_ml"    = "Type x WPy0-1 + Type x WPy0 + (1|year)",
+                                        "m_no_prev_year_ml" = "Type x WPy0 + (1|year)",
+                                        "m_no_same_year_ml" = "Type x WPy0-1 + (1|year)",
+                                        "m_null_year_ml"    = "Null + (1|year)"
+    )) %>%
+    dplyr::arrange(AICc)
+  cat("\n--- AICc comparison, all models with (1|year) ---\n")
+  print(aic_year_only)
+  
   r2_full    <- performance::r2_nakagawa(m_full_reml)
   r2_no_prev <- performance::r2_nakagawa(m_no_prev_reml)
   r2_no_same <- performance::r2_nakagawa(m_no_same_reml)
   r2_base    <- performance::r2_nakagawa(m_base_reml)
-
+  
   list(
     data        = df_mod,
     models_reml = list(full = m_full_reml, no_prev = m_no_prev_reml,
-                       no_same = m_no_same_reml, base = m_base_reml),
+                       no_same = m_no_same_reml, base = m_base_reml,
+                       null = m_null_reml, full_year = m_full_year_reml),
     models_ml   = list(full = m_full_ml,   no_prev = m_no_prev_ml,
-                       no_same = m_no_same_ml,   base = m_base_ml),
-    anova_full     = car::Anova(m_full_reml,    type = 3),
+                       no_same = m_no_same_ml,   base = m_base_ml,
+                       null = m_null_ml),
+    anova_full      = anova_full,
+    anova_full_year = anova_full_year,
+    compare_year_re = compare_year_re,
+    singular_year   = singular_year,
+    aic_year_only   = aic_year_only,
     lrt_drop_prev  = anova(m_full_ml, m_no_prev_ml),
     lrt_drop_same  = anova(m_full_ml, m_no_same_ml),
-    aic = AIC(m_full_ml, m_no_prev_ml, m_no_same_ml, m_base_ml) %>%
-      as.data.frame() %>% rownames_to_column("Model") %>% arrange(AIC),
+    aic = MuMIn::AICc(m_full_ml, m_no_prev_ml, m_no_same_ml, m_base_ml, m_null_ml) %>%
+      as.data.frame() %>% rownames_to_column("Model") %>% arrange(AICc),
     r2 = list(full = r2_full, no_prev = r2_no_prev,
               no_same = r2_no_same, base = r2_base),
     delta_marginal = tibble(
@@ -329,13 +382,13 @@ fit_itd_models_interaction <- function(df, response) {
 
 # 9b) Additive models: no interactions (sensitivity)
 fit_itd_models_additive <- function(df, response) {
-
+  
   df_mod <- df %>%
     drop_na(.data[[response]], Plot, Type, same_c, previous1_c) %>%
     mutate(Type = fct_relevel(factor(Type), "Reserve", "Fragment"),
            Plot = factor(Plot),
            response_log = log(.data[[response]]))
-
+  
   m_full_reml    <- lmer(reformulate(c("Type", "previous1_c", "same_c", "(1|Plot)"),
                                      response = "response_log"), data = df_mod, REML = TRUE)
   m_no_prev_reml <- lmer(reformulate(c("Type", "same_c",      "(1|Plot)"),
@@ -344,28 +397,60 @@ fit_itd_models_additive <- function(df, response) {
                                      response = "response_log"), data = df_mod, REML = TRUE)
   m_base_reml    <- lmer(reformulate(c("Type",                "(1|Plot)"),
                                      response = "response_log"), data = df_mod, REML = TRUE)
-
+  m_null_reml    <- lmer(reformulate("(1|Plot)",
+                                     response = "response_log"), data = df_mod, REML = TRUE)
+  # m_null: true null model (random effect only, no fixed effects) -- distinct
+  # from m_base, which still includes Type as a fixed effect
+  
+  # --- year as a random effect (see fit_itd_models_interaction for rationale) -
+  m_full_year_reml <- lmer(reformulate(c("Type", "previous1_c", "same_c",
+                                         "(1|Plot)", "(1|year)"),
+                                       response = "response_log"), data = df_mod, REML = TRUE)
+  singular_year <- lme4::isSingular(m_full_year_reml)
+  
+  anova_full      <- car::Anova(m_full_reml,      type = 3)
+  anova_full_year <- car::Anova(m_full_year_reml, type = 3)
+  
+  compare_year_re <- {
+    a1 <- as.data.frame(anova_full)      %>% tibble::rownames_to_column("term")
+    a2 <- as.data.frame(anova_full_year) %>% tibble::rownames_to_column("term")
+    dplyr::full_join(
+      a1 %>% dplyr::select(term, Chisq_no_year = Chisq, P_no_year = `Pr(>Chisq)`),
+      a2 %>% dplyr::select(term, Chisq_with_year = Chisq, P_with_year = `Pr(>Chisq)`),
+      by = "term"
+    )
+  }
+  cat("\nSingular fit (year RE model)?", singular_year, "\n")
+  print(compare_year_re)
+  
   m_full_ml    <- update(m_full_reml,    REML = FALSE)
   m_no_prev_ml <- update(m_no_prev_reml, REML = FALSE)
   m_no_same_ml <- update(m_no_same_reml, REML = FALSE)
   m_base_ml    <- update(m_base_reml,    REML = FALSE)
-
+  m_null_ml    <- update(m_null_reml,    REML = FALSE)
+  m_full_year_ml <- update(m_full_year_reml, REML = FALSE)
+  
   r2_full    <- performance::r2_nakagawa(m_full_reml)
   r2_no_prev <- performance::r2_nakagawa(m_no_prev_reml)
   r2_no_same <- performance::r2_nakagawa(m_no_same_reml)
   r2_base    <- performance::r2_nakagawa(m_base_reml)
-
+  
   list(
     data        = df_mod,
     models_reml = list(full = m_full_reml, no_prev = m_no_prev_reml,
-                       no_same = m_no_same_reml, base = m_base_reml),
+                       no_same = m_no_same_reml, base = m_base_reml,
+                       null = m_null_reml, full_year = m_full_year_reml),
     models_ml   = list(full = m_full_ml,   no_prev = m_no_prev_ml,
-                       no_same = m_no_same_ml,   base = m_base_ml),
-    anova_full    = car::Anova(m_full_reml,    type = 3),
+                       no_same = m_no_same_ml,   base = m_base_ml,
+                       null = m_null_ml),
+    anova_full      = anova_full,
+    anova_full_year = anova_full_year,
+    compare_year_re = compare_year_re,
+    singular_year   = singular_year,
     lrt_drop_prev = anova(m_full_ml, m_no_prev_ml),
     lrt_drop_same = anova(m_full_ml, m_no_same_ml),
-    aic = AIC(m_full_ml, m_no_prev_ml, m_no_same_ml, m_base_ml) %>%
-      as.data.frame() %>% rownames_to_column("Model") %>% arrange(AIC),
+    aic = MuMIn::AICc(m_full_ml, m_no_prev_ml, m_no_same_ml, m_base_ml, m_null_ml) %>%
+      as.data.frame() %>% rownames_to_column("Model") %>% arrange(AICc),
     r2 = list(full = r2_full, no_prev = r2_no_prev,
               no_same = r2_no_same, base = r2_base),
     delta_marginal = tibble(
@@ -378,12 +463,12 @@ fit_itd_models_additive <- function(df, response) {
 
 # 9c) Type-split models: no Type term (supplement)
 fit_itd_models_notype <- function(df, response) {
-
+  
   df_mod <- df %>%
     drop_na(.data[[response]], Plot, same_c, previous1_c) %>%
     mutate(Plot = factor(Plot),
            response_log = log(.data[[response]]))
-
+  
   m_full_reml    <- lmer(reformulate(c("previous1_c", "same_c", "(1|Plot)"),
                                      response = "response_log"), data = df_mod, REML = TRUE)
   m_no_prev_reml <- lmer(reformulate(c("same_c",      "(1|Plot)"),
@@ -392,28 +477,56 @@ fit_itd_models_notype <- function(df, response) {
                                      response = "response_log"), data = df_mod, REML = TRUE)
   m_base_reml    <- lmer(reformulate(c("(1|Plot)"),
                                      response = "response_log"), data = df_mod, REML = TRUE)
-
+  
+  # --- year as a random effect (see fit_itd_models_interaction for rationale) -
+  # NOTE: m_base_reml above is already a true null model here (no fixed
+  # effects at all, since Type is dropped for this within-type-split
+  # analysis) -- so the +year null variant below is the direct comparison.
+  m_full_year_reml <- lmer(reformulate(c("previous1_c", "same_c", "(1|Plot)", "(1|year)"),
+                                       response = "response_log"), data = df_mod, REML = TRUE)
+  singular_year <- lme4::isSingular(m_full_year_reml)
+  
+  anova_full      <- car::Anova(m_full_reml,      type = 3)
+  anova_full_year <- car::Anova(m_full_year_reml, type = 3)
+  
+  compare_year_re <- {
+    a1 <- as.data.frame(anova_full)      %>% tibble::rownames_to_column("term")
+    a2 <- as.data.frame(anova_full_year) %>% tibble::rownames_to_column("term")
+    dplyr::full_join(
+      a1 %>% dplyr::select(term, Chisq_no_year = Chisq, P_no_year = `Pr(>Chisq)`),
+      a2 %>% dplyr::select(term, Chisq_with_year = Chisq, P_with_year = `Pr(>Chisq)`),
+      by = "term"
+    )
+  }
+  cat("\nSingular fit (year RE model)?", singular_year, "\n")
+  print(compare_year_re)
+  
   m_full_ml    <- update(m_full_reml,    REML = FALSE)
   m_no_prev_ml <- update(m_no_prev_reml, REML = FALSE)
   m_no_same_ml <- update(m_no_same_reml, REML = FALSE)
   m_base_ml    <- update(m_base_reml,    REML = FALSE)
-
+  m_full_year_ml <- update(m_full_year_reml, REML = FALSE)
+  
   r2_full    <- performance::r2_nakagawa(m_full_reml)
   r2_no_prev <- performance::r2_nakagawa(m_no_prev_reml)
   r2_no_same <- performance::r2_nakagawa(m_no_same_reml)
   r2_base    <- performance::r2_nakagawa(m_base_reml)
-
+  
   list(
     data        = df_mod,
     models_reml = list(full = m_full_reml, no_prev = m_no_prev_reml,
-                       no_same = m_no_same_reml, base = m_base_reml),
+                       no_same = m_no_same_reml, base = m_base_reml,
+                       full_year = m_full_year_reml),
     models_ml   = list(full = m_full_ml,   no_prev = m_no_prev_ml,
                        no_same = m_no_same_ml,   base = m_base_ml),
-    anova_full    = car::Anova(m_full_reml,    type = 3),
+    anova_full      = anova_full,
+    anova_full_year = anova_full_year,
+    compare_year_re = compare_year_re,
+    singular_year   = singular_year,
     lrt_drop_prev = anova(m_full_ml, m_no_prev_ml),
     lrt_drop_same = anova(m_full_ml, m_no_same_ml),
-    aic = AIC(m_full_ml, m_no_prev_ml, m_no_same_ml, m_base_ml) %>%
-      as.data.frame() %>% rownames_to_column("Model") %>% arrange(AIC),
+    aic = MuMIn::AICc(m_full_ml, m_no_prev_ml, m_no_same_ml, m_base_ml) %>%
+      as.data.frame() %>% rownames_to_column("Model") %>% arrange(AICc),
     r2 = list(full = r2_full, no_prev = r2_no_prev,
               no_same = r2_no_same, base = r2_base),
     delta_marginal = tibble(
@@ -432,6 +545,15 @@ cat("Fitting interaction models (weighted)...\n")
 itd_fit_int     <- fit_itd_models_interaction(itd_weighted,   "avg_itd_cov")
 cat("Fitting interaction models (unweighted)...\n")
 itd_fit_int_uw  <- fit_itd_models_interaction(itd_unweighted, "avg_itd_cov_unw")
+
+cat("\n\n=== COMBINED YEAR-RANDOM-EFFECT COMPARISON, BODY SIZE ===\n")
+compare_all_bodysize <- bind_rows(
+  itd_fit_int$compare_year_re    %>% mutate(model = "weighted",   .before = 1),
+  itd_fit_int_uw$compare_year_re %>% mutate(model = "unweighted", .before = 1)
+)
+print(as.data.frame(compare_all_bodysize))
+cat("Singular fit, weighted (year RE)?  ", itd_fit_int$singular_year, "\n")
+cat("Singular fit, unweighted (year RE)?", itd_fit_int_uw$singular_year, "\n")
 
 cat("Fitting additive models (weighted)...\n")
 itd_fit_add     <- fit_itd_models_additive(itd_weighted,   "avg_itd_cov")
@@ -459,7 +581,7 @@ itd_fit_frag_uw  <- fit_itd_models_notype(itd_unweighted_frag, "avg_itd_cov_unw"
 
 cat("\n=== WEIGHTED — interaction model ===\n")
 itd_fit_int$anova_full
-summary(itd_fit_int$models_reml$full)
+summary(itd_fit_int$models_reml$full_year)
 itd_fit_int$r2$full
 itd_fit_int$delta_marginal
 itd_fit_int$lrt_drop_prev
@@ -468,7 +590,7 @@ itd_fit_int$aic
 
 cat("\n=== UNWEIGHTED — interaction model ===\n")
 itd_fit_int_uw$anova_full
-summary(itd_fit_int_uw$models_reml$full)
+summary(itd_fit_int_uw$models_reml$full_year)
 itd_fit_int_uw$r2$full
 itd_fit_int_uw$delta_marginal
 itd_fit_int_uw$lrt_drop_prev
@@ -547,22 +669,122 @@ ggsave(file.path(figures_dir, "itd_unweighted_model.svg"),
        p_itd_unw_model, width = 10, height = 4, units = "in")
 
 # =============================================================================
+# SECTION 12b — Type-split figures (reserves only / fragments only)
+# =============================================================================
+
+centering_offset <- function(raw, centered) {
+  mean(raw, na.rm = TRUE) - mean(centered, na.rm = TRUE)
+}
+
+make_typesplit_panels <- function(fit, df_raw, response_col, y_label, type_name, color) {
+  
+  df   <- fit$data
+  m    <- fit$models_reml$full_year
+  
+  prev_off <- centering_offset(df_raw$previous1, df_raw$previous1_c)
+  same_off <- centering_offset(df_raw$same,      df_raw$same_c)
+  
+  prev_seq <- seq(min(df$previous1_c, na.rm = TRUE),
+                  max(df$previous1_c, na.rm = TRUE), length.out = 200)
+  same_seq <- seq(min(df$same_c,      na.rm = TRUE),
+                  max(df$same_c,      na.rm = TRUE), length.out = 200)
+  
+  pred_prev <- ggeffects::ggpredict(
+    m, terms = "previous1_c [prev_seq]", condition = list(same_c = 0)
+  ) %>% as.data.frame() %>% mutate(x_mm = x + prev_off)
+  
+  pred_same <- ggeffects::ggpredict(
+    m, terms = "same_c [same_seq]", condition = list(previous1_c = 0)
+  ) %>% as.data.frame() %>% mutate(x_mm = x + same_off)
+  
+  # back-transform predictions from log scale
+  pred_prev <- pred_prev %>%
+    mutate(across(c(predicted, conf.low, conf.high), exp))
+  pred_same <- pred_same %>%
+    mutate(across(c(predicted, conf.low, conf.high), exp))
+  
+  p_prev <- ggplot() +
+    geom_point(data = df_raw,
+               aes(x = previous1, y = .data[[response_col]]),
+               color = "gray40", alpha = 0.35, size = 2) +
+    geom_ribbon(data = pred_prev,
+                aes(x = x_mm, ymin = conf.low, ymax = conf.high),
+                fill = color, alpha = 0.25) +
+    geom_line(data = pred_prev,
+              aes(x = x_mm, y = predicted),
+              color = color, linewidth = 1.2) +
+    labs(x = "Previous-year winter precipitation (mm)", y = y_label) +
+    theme_panel
+  
+  p_same <- ggplot() +
+    geom_point(data = df_raw,
+               aes(x = same, y = .data[[response_col]]),
+               color = "gray40", alpha = 0.35, size = 2) +
+    geom_ribbon(data = pred_same,
+                aes(x = x_mm, ymin = conf.low, ymax = conf.high),
+                fill = color, alpha = 0.25) +
+    geom_line(data = pred_same,
+              aes(x = x_mm, y = predicted),
+              color = color, linewidth = 1.2) +
+    labs(x = "Same-year winter precipitation (mm)", y = NULL) +
+    theme_panel
+  
+  p_prev + p_same + plot_layout(ncol = 2) +
+    plot_annotation(title = type_name) &
+    theme(plot.title = element_text(face = "bold", size = 14))
+}
+
+# Weighted
+p_res_w  <- make_typesplit_panels(itd_fit_res,  itd_weighted_res,  "avg_itd_cov",
+                                  "Assemblage-weighted mean ITD (mm)",
+                                  "Reserves only", "#2C7C4D")
+p_frag_w <- make_typesplit_panels(itd_fit_frag, itd_weighted_frag, "avg_itd_cov",
+                                  "Assemblage-weighted mean ITD (mm)",
+                                  "Fragments only", "#888780")
+
+print(p_res_w)
+print(p_frag_w)
+
+ggsave(file.path(figures_dir, "itd_weighted_reserves.svg"),
+       p_res_w,  width = 10, height = 4, units = "in")
+ggsave(file.path(figures_dir, "itd_weighted_fragments.svg"),
+       p_frag_w, width = 10, height = 4, units = "in")
+
+# Unweighted
+p_res_uw  <- make_typesplit_panels(itd_fit_res_uw,  itd_unweighted_res,  "avg_itd_cov_unw",
+                                   "Assemblage-unweighted mean ITD (mm)",
+                                   "Reserves only", "#2C7C4D")
+p_frag_uw <- make_typesplit_panels(itd_fit_frag_uw, itd_unweighted_frag, "avg_itd_cov_unw",
+                                   "Assemblage-unweighted mean ITD (mm)",
+                                   "Fragments only", "#888780")
+
+print(p_res_uw)
+print(p_frag_uw)
+
+ggsave(file.path(figures_dir, "itd_unweighted_reserves.svg"),
+       p_res_uw,  width = 10, height = 4, units = "in")
+ggsave(file.path(figures_dir, "itd_unweighted_fragments.svg"),
+       p_frag_uw, width = 10, height = 4, units = "in")
+
+# =============================================================================
 # SECTION 13 — DHARMa diagnostics (matches R-05 approach)
 #
-# Runs on the main weighted and unweighted interaction models.
-# Box-Cox lambda, simulated residuals, dispersion, outlier, uniformity tests.
+# Runs on the +year weighted and unweighted interaction models
+# (models_reml$full_year) -- NOT models_reml$full, which is the superseded
+# no-year specification. Box-Cox lambda, simulated residuals, dispersion,
+# outlier, uniformity tests.
 # =============================================================================
 
 run_diagnostics_itd <- function(model, metric_name, diag_dat) {
-
+  
   diag_dat <- as.data.frame(diag_dat)
-
+  y <- diag_dat[["Value"]]
+  
   cat("\n==============================\n")
   cat("Diagnostics:", metric_name, "\n")
   cat("==============================\n")
-
+  
   # ---- 1) Box-Cox ----
-  y       <- diag_dat[["Value"]]
   lambdas <- seq(-2, 2, by = 0.1)
   log_liks <- sapply(lambdas, function(lam) {
     y_t <- if (abs(lam) < 1e-10) log(y) else (y^lam - 1) / lam
@@ -571,35 +793,35 @@ run_diagnostics_itd <- function(model, metric_name, diag_dat) {
   lambda_opt <- lambdas[which.max(log_liks)]
   cat("Box-Cox optimal lambda:", round(lambda_opt, 3),
       " (log = 0, no transform = 1)\n")
-
+  
   # ---- 2) Distribution check ----
   png(file.path(figures_dir, "diagnostics",
                 paste0(metric_name, "_distribution_check.png")),
       width = 800, height = 400, res = 120)
   par(mfrow = c(1, 2))
-  hist(diag_dat[["Value"]], main = paste(metric_name, "- raw"),
+  hist(y, main = paste(metric_name, "- raw"),
        xlab = "Value", col = "steelblue", border = "white")
-  hist(log(diag_dat[["Value"]] + 0.001), main = paste(metric_name, "- log"),
+  hist(log(y + 0.001), main = paste(metric_name, "- log"),
        xlab = "log(Value)", col = "coral", border = "white")
   par(mfrow = c(1, 1))
   dev.off()
-
+  
   # ---- 3) DHARMa ----
   sim_res      <- DHARMa::simulateResiduals(model, n = 1000, plot = FALSE)
   disp_test    <- DHARMa::testDispersion(sim_res,  plot = FALSE)
   outlier_test <- DHARMa::testOutliers(sim_res,    plot = FALSE)
   unif_test    <- DHARMa::testUniformity(sim_res,  plot = FALSE)
-
+  
   png(file.path(figures_dir, "diagnostics",
                 paste0(metric_name, "_dharma_residuals.png")),
       width = 900, height = 500, res = 120)
   plot(sim_res, main = metric_name)
   dev.off()
-
+  
   cat("DHARMa dispersion p =", round(disp_test$p.value,    4), "\n")
   cat("DHARMa outlier p =",    round(outlier_test$p.value, 4), "\n")
   cat("DHARMa uniformity p =", round(unif_test$p.value,    4), "\n")
-
+  
   # ---- 4) check_model ----
   perf_plot <- performance::check_model(model)
   ggplot2::ggsave(
@@ -607,13 +829,17 @@ run_diagnostics_itd <- function(model, metric_name, diag_dat) {
               paste0(metric_name, "_check_model.png")),
     plot = plot(perf_plot), width = 12, height = 10, dpi = 150
   )
-
-  tibble::tibble(
-    metric           = metric_name,
-    boxcox_lambda    = round(lambda_opt,           3),
-    dharma_disp_p    = round(disp_test$p.value,    4),
-    dharma_outlier_p = round(outlier_test$p.value, 4),
-    dharma_uniform_p = round(unif_test$p.value,    4)
+  
+  list(
+    summary = tibble::tibble(
+      metric           = metric_name,
+      boxcox_lambda    = round(lambda_opt,           3),
+      dharma_disp_p    = round(disp_test$p.value,    4),
+      dharma_outlier_p = round(outlier_test$p.value, 4),
+      dharma_uniform_p = round(unif_test$p.value,    4)
+    ),
+    sim_res = sim_res,
+    data    = diag_dat
   )
 }
 
@@ -621,12 +847,12 @@ run_diagnostics_itd <- function(model, metric_name, diag_dat) {
 dd_weighted   <- itd_fit_int$data    %>% rename(Value = avg_itd_cov)
 dd_unweighted <- itd_fit_int_uw$data %>% rename(Value = avg_itd_cov_unw)
 
-diag_w  <- run_diagnostics_itd(itd_fit_int$models_reml$full,
-                                "ITD_weighted",   dd_weighted)
-diag_uw <- run_diagnostics_itd(itd_fit_int_uw$models_reml$full,
-                                "ITD_unweighted", dd_unweighted)
+diag_w  <- run_diagnostics_itd(itd_fit_int$models_reml$full_year,
+                               "ITD_weighted",   dd_weighted)
+diag_uw <- run_diagnostics_itd(itd_fit_int_uw$models_reml$full_year,
+                               "ITD_unweighted", dd_unweighted)
 
-diag_summary_itd <- bind_rows(diag_w, diag_uw)
+diag_summary_itd <- bind_rows(diag_w$summary, diag_uw$summary)
 print(diag_summary_itd)
 
 writexl::write_xlsx(diag_summary_itd,
@@ -675,11 +901,95 @@ delta_tbl <- bind_rows(
   itd_fit_add_uw$delta_marginal %>% mutate(model = "unweighted_additive",    .before = 1)
 )
 
+
+
+# =============================================================================
+# SECTION 14b — Summary tables (fixed effects + variance components)
+# =============================================================================
+
+extract_lmer_summary <- function(model, label) {
+  
+  # Fixed effects with CIs
+  fe <- broom.mixed::tidy(model, effects = "fixed", conf.int = TRUE) %>%
+    mutate(model = label, .before = 1)
+  
+  # Variance components (random effects + residual)
+  vc <- broom.mixed::tidy(model, effects = "ran_pars") %>%
+    mutate(model = label, .before = 1)
+  
+  list(fixed = fe, variance = vc)
+}
+
+summaries <- list(
+  extract_lmer_summary(itd_fit_int$models_reml$full_year,     "weighted_interaction"),
+  extract_lmer_summary(itd_fit_int_uw$models_reml$full_year,  "unweighted_interaction"),
+  extract_lmer_summary(itd_fit_add$models_reml$full_year,     "weighted_additive"),
+  extract_lmer_summary(itd_fit_add_uw$models_reml$full_year,  "unweighted_additive"),
+  extract_lmer_summary(itd_fit_res$models_reml$full_year,     "reserves_weighted"),
+  extract_lmer_summary(itd_fit_frag$models_reml$full_year,    "fragments_weighted"),
+  extract_lmer_summary(itd_fit_res_uw$models_reml$full_year,  "reserves_unweighted"),
+  extract_lmer_summary(itd_fit_frag_uw$models_reml$full_year, "fragments_unweighted")
+)
+
+fe_all <- bind_rows(lapply(summaries, `[[`, "fixed"))
+vc_all <- bind_rows(lapply(summaries, `[[`, "variance"))
+
+summary_combined <- fe_all %>%
+  mutate(component = "fixed") %>%
+  bind_rows(vc_all %>% mutate(component = "random"))
+
+# =============================================================================
+# SECTION 14c — Reduced models (reported in Appendix S1 as Table S16 and
+# Table S17; NOTE: comment previously said "Tables S11 and S12" -- that
+# reflected an earlier draft's numbering and is now stale)
+# =============================================================================
+
+# ANOVAs for the reduced single-predictor models (Table S16, Panel A & B)
+anova_no_same_w  <- car::Anova(itd_fit_int$models_reml$no_same,    type = 3)  # Panel A weighted
+anova_no_same_uw <- car::Anova(itd_fit_int_uw$models_reml$no_same, type = 3)  # Panel A unweighted
+anova_no_prev_w  <- car::Anova(itd_fit_int$models_reml$no_prev,    type = 3)  # Panel B weighted
+anova_no_prev_uw <- car::Anova(itd_fit_int_uw$models_reml$no_prev, type = 3)  # Panel B unweighted
+
+tidy_anova <- function(anova_obj, label) {
+  as.data.frame(anova_obj) %>%
+    rownames_to_column("term") %>%
+    mutate(model = label, .before = 1) %>%
+    rename(Chisq = Chisq, Df = Df, p_value = `Pr(>Chisq)`)
+}
+
+tableS16 <- bind_rows(
+  tidy_anova(anova_no_same_w,  "PanelA_weighted"),
+  tidy_anova(anova_no_same_uw, "PanelA_unweighted"),
+  tidy_anova(anova_no_prev_w,  "PanelB_weighted"),
+  tidy_anova(anova_no_prev_uw, "PanelB_unweighted")
+)
+
+# AICc for the three models in Table S17
+tableS17 <- bind_rows(
+  itd_fit_int$aic    %>% mutate(model = "weighted",   .before = 1),
+  itd_fit_int_uw$aic %>% mutate(model = "unweighted", .before = 1)
+) %>%
+  filter(Model %in% c("m_full_ml", "m_no_prev_ml", "m_no_same_ml")) %>%
+  mutate(Model = dplyr::recode(Model,
+                               "m_full_ml"    = "Type × WPy0-1 + Type × WPy0 + (1|Site)",
+                               "m_no_prev_ml" = "Type × WPy0 + (1|Site)",
+                               "m_no_same_ml" = "Type × WPy0-1 + (1|Site)"
+  ))
+
 writexl::write_xlsx(
   list(
-    ANOVA_results  = results_tbl,
-    AIC_comparison = aic_tbl,
-    Delta_R2       = delta_tbl
+    ANOVA_results    = results_tbl,
+    AICc_comparison  = aic_tbl,
+    Delta_R2         = delta_tbl,
+    Fixed_Effects    = fe_all,      # <-- new
+    Variance_Components = vc_all,    # <-- new
+    Summary = summary_combined,
+    TableS16_reduced    = tableS16,        # <-- new (Appendix S1 Table S16)
+    TableS17_AICc       = tableS17,        # <-- new (Appendix S1 Table S17)
+    YearRE_ANOVA_weighted     = itd_fit_int$compare_year_re,
+    YearRE_ANOVA_unweighted   = itd_fit_int_uw$compare_year_re,
+    YearRE_AICc_weighted      = itd_fit_int$aic_year_only,
+    YearRE_AICc_unweighted    = itd_fit_int_uw$aic_year_only
   ),
   file.path(results_dir, "ITD_model_results.xlsx")
 )
@@ -687,4 +997,3 @@ writexl::write_xlsx(
 message("\n--- Body size analysis complete ---")
 message("Figures written to: ", figures_dir)
 message("Results written to: ", results_dir)
-

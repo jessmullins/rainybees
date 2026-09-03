@@ -8,3 +8,17 @@ figures/
 results/
 *.png
 *.pdf
+
+# macOS
+.DS_Store
+
+# R session files
+.Rhistory
+.RData
+
+# Excluded from public repo
+/GCB precip ms dec/
+/ecology/
+R/R-00_station_setup.R
+R/R-09-speciesAbundance.R
+R/r10-lol.R

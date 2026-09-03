@@ -39,15 +39,22 @@ precip <- read.csv(file.path(cleaned_dir, "precipyrs.csv"))
 evi    <- read.csv(file.path(raw_dir,     "wild_evi.csv"))
 
 # Join on year; use same-year precipitation (WPy0 = same)
-merged_data <- left_join(evi, precip %>% select(year, same), by = "year")
+merged_data <- left_join(evi, precip %>% dplyr::select(year, same,previous1), by = "year")
 
 # =============================================================================
-# SECTION 2 — Linear model: EVI ~ same-year winter precipitation
+# SECTION 2 — Linear model: EVI ~ WPy0 and WPy0-1
 # =============================================================================
 
 evi_lm <- lm(mean_EVI ~ same, data = merged_data)
 summary(evi_lm)
-car::Anova(evi_lm)
+car::Anova(evi_lm, type = 3)
+
+r2_val <- summary(evi_lm)$r.squared
+p_val  <- summary(evi_lm)$coefficients[2, 4]
+
+evi_lm_previous <- lm(mean_EVI ~ previous1, data = merged_data)
+summary(evi_lm_previous)
+car::Anova(evi_lm_previous, type = 3)
 
 r2_val <- summary(evi_lm)$r.squared
 p_val  <- summary(evi_lm)$coefficients[2, 4]
@@ -61,7 +68,7 @@ evi_plot <- ggplot(merged_data, aes(x = same, y = mean_EVI)) +
              size = 4, stroke = 0.4, alpha = 0.8) +
   geom_smooth(method = "lm", se = TRUE,
               color = "gray50", fill = "gray80", linewidth = 0.70) +
-  labs(x = "Winter precipitation (mm)",
+  labs(x = "WPy0",
        y = "Mean summer EVI") +
   theme_classic(base_size = 13)
 
@@ -69,6 +76,21 @@ print(evi_plot)
 
 ggsave(file.path(figures_dir, "evi_plot.svg"),
        plot = evi_plot, width = 5, height = 5.2, units = "in")
+
+# y0-1 vs evi
+evi_plot_previous <- ggplot(merged_data, aes(x = previous1, y = mean_EVI)) +
+  geom_point(shape = 21, fill = "purple", color = "purple",
+             size = 4, stroke = 0.4, alpha = 0.8) +
+  geom_smooth(method = "lm", se = TRUE,
+              color = "gray50", fill = "gray80", linewidth = 0.70) +
+  labs(x = "WPy0-1 (mm)",
+       y = "Mean summer EVI") +
+  theme_classic(base_size = 13)
+
+print(evi_plot_previous)
+
+ggsave(file.path(figures_dir, "evi_plot_previous.svg"),
+       plot = evi_plot_previous, width = 5, height = 5.2, units = "in")
 
 # =============================================================================
 # SECTION 4 — Assumption diagnostics

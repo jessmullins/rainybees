@@ -34,7 +34,7 @@
 ##           results/Table_S_previous_indicators_traits.csv — prev-yr indicators
 ##
 ## Author  : Jess Mullins
-## Date    : 6-Apr-2026
+## Date    : 6-Apr-2026, edited August 24, 2026
 ## =============================================================================
 
 suppressPackageStartupMessages({
@@ -47,6 +47,7 @@ suppressPackageStartupMessages({
   library(patchwork)
   library(scales)
   library(writexl)
+  library(ggrepel)
 })
 
 ## File paths
@@ -76,30 +77,13 @@ trait_species_col <- "scientificName"
 
 survey_years <- c("2011","2012","2015","2016","2022","2023","2024")
 
-indicators <- c("Halictus farinosus", "Lasioglossum sisymbrii",
-                "Augochlorella pomoniella", "Eucera dorsata", "Eucera tricinctella",
-                "Lasioglossum punctatoventre", "Lasioglossum robustum",
-                "Megachile subnigra", "Melissodes plumosus", "Anthidium jocosum",
-                "Ceratina nanula", "Lasioglossum MSN turgiventre",
-                "Lasioglossum perparvum", "Melissodes tessellatus",
-                "Micralictoides ruficaudus", "Andrena osmioides",
-                "Perdita interrupta interrupta", "Dianthidium dubium",
-                "Dufourea sandhouseae", "Andrena ablegata",
-                "Dianthidium pudicum consimile", "Megachile coquilletti",
-                "Osmia gabrielis", "Anthophorula torticornis", "Bombus vosnesenskii",
-                "Lasioglossum titusi", "Lasioglossum actinosum",
-                "Lasioglossum stictaspis complex", "Osmia granulosa",
-                "Halictus ligatus", "Bombus californicus", "Osmia clarescens",
-                "Hylaeus mesillae cressoni", "Diadasia opuntiae",
-                "Calliopsis obscurella", "Hesperapis fuchsi", "Melissodes stearnsi",
-                "Ashmeadiella californica", "Dufourea rhamni", "Andrena atypica",
-                "Lasioglossum perichlarum", "Megachile onobrychidis",
-                "Dufourea brevicornis", "Melissodes velutinus", "Diadasia ochracea",
-                "Perdita claypolei australior")
+# remove indicator spp 
+indicators <- readRDS(file.path(cleaned_dir, "indicator_species.rds"))
 
-# Filter indicators for sensitivity analysis — comment out to include all species
+# Filter indicators for sensitivity analysis 
 df <- df %>%
-  filter(!scientificName == "Perdita")
+  filter(!scientificName == "Perdita") # no genus-level indicators
+# , (!scientificName %in% indicators)) # unhash to remove indicators
 
 # =============================================================================
 # SECTION 2 — Build community matrices
@@ -164,16 +148,27 @@ mod_main <- rda(spec_h_rate ~ Type + same + previous1, data = env_stand)
 summary(mod_main)
 vif.cca(mod_main)
 
+# --- Year-blocked permutations -----------------------------------------------
+# Same rationale as the mixed models elsewhere: same/previous1 (WPy0/WPy0-1)
+# are year-level variables, so sites sampled in the same year are not
+# independent with respect to precipitation. Unrestricted permutation
+# (shuffling site-years freely) overstates the effective sample size for
+# these terms, inflating Type I error risk -- the same concern raised for
+# the diversity and body-size models. Restricting permutations to within
+# year (permute::how(blocks = ...)) is the RDA-appropriate analogue of
+# adding (1 | year) to a mixed model.
+perm_year_rda <- how(nperm = 999, blocks = env_stand$year)
+
 # Global test
-a_global <- anova(mod_main, permutations = 999)
+a_global <- anova(mod_main, permutations = perm_year_rda)
 print(a_global)
 
 # Axes test
-a_axes <- anova(mod_main, by = "axis", permutations = 999)
+a_axes <- anova(mod_main, by = "axis", permutations = perm_year_rda)
 print(a_axes)
 
 # Terms test
-a_terms <- anova(mod_main, by = "terms", permutations = 999)
+a_terms <- anova(mod_main, by = "terms", permutations = perm_year_rda)
 print(a_terms)
 
 RsquareAdj(mod_main)
@@ -184,11 +179,11 @@ RsquareAdj(mod_main)
 # not included in manuscript but interesting 
 
 uniq_type <- anova(rda(spec_h_rate ~ Type     + Condition(same + previous1),
-                       data = env_stand), permutations = 999)$Variance[1]
+                       data = env_stand), permutations = perm_year_rda)$Variance[1]
 uniq_same <- anova(rda(spec_h_rate ~ same     + Condition(Type + previous1),
-                       data = env_stand), permutations = 999)$Variance[1]
+                       data = env_stand), permutations = perm_year_rda)$Variance[1]
 uniq_prev <- anova(rda(spec_h_rate ~ previous1 + Condition(Type + same),
-                       data = env_stand), permutations = 999)$Variance[1]
+                       data = env_stand), permutations = perm_year_rda)$Variance[1]
 
 explained_var <- a_global$Variance[1]
 residual_var  <- a_global$Variance[2]
@@ -279,6 +274,30 @@ sc_bp2 <- sc_bp %>%
   left_join(vector_labels, by = "var") %>%
   mutate(label = replace_na(label, ""))
 
+# --- Species scores: identify the 5 taxa most strongly driving the RDA
+# ordination (longest vectors in RDA1-RDA2 space), for display as light
+# gray arrows -- visually distinct from the bold black environmental
+# predictor vectors above.
+sc_species <- scores(mod_main, display = "species", scaling = 2) %>%
+  as.data.frame() %>%
+  rownames_to_column("species") %>%
+  mutate(veclen = sqrt(RDA1^2 + RDA2^2)) %>%
+  arrange(desc(veclen))
+
+cat("\n--- Top 5 taxa driving the RDA ordination (by vector length) ---\n")
+print(sc_species %>% dplyr::select(species, RDA1, RDA2, veclen) %>% slice_head(n = 5))
+
+sc_species_top5 <- sc_species %>% slice_head(n = 5)
+
+# Species vectors are often a very different scale from site/env vectors in
+# a correlation biplot; a modest constant multiplier keeps them visible
+# without overwhelming the plot. Adjust species_vec_scale if arrows look
+# too short/long relative to the environmental vectors once plotted.
+species_vec_scale <- 1
+sc_species_top5 <- sc_species_top5 %>%
+  mutate(RDA1_plot = RDA1 * species_vec_scale,
+         RDA2_plot = RDA2 * species_vec_scale)
+
 eig_vals  <- eigenvals(mod_main, model = "constrained")
 prop_var  <- eig_vals / sum(eig_vals)
 axis1_lab <- paste0("RDA1 (", round(100 * prop_var[1], 1), "%)")
@@ -287,9 +306,24 @@ axis2_lab <- paste0("RDA2 (", round(100 * prop_var[2], 1), "%)")
 p_rda <- ggplot(sc_sites, aes(RDA1, RDA2)) +
   geom_hline(yintercept = 0, linetype = "dotted", linewidth = 0.4) +
   geom_vline(xintercept = 0, linetype = "dotted", linewidth = 0.4) +
+  # Species vectors (top 5 taxa), light gray, drawn first so they sit
+  # beneath the site points and environmental vectors
+  geom_segment(data = sc_species_top5,
+               aes(x = 0, y = 0, xend = RDA1_plot, yend = RDA2_plot),
+               inherit.aes = FALSE,
+               arrow = arrow(length = unit(0.02, "npc")),
+               color = "gray65", linewidth = 0.5) +
+  ggrepel::geom_text_repel(data = sc_species_top5,
+                           aes(x = RDA1_plot, y = RDA2_plot, label = species),
+                           inherit.aes = FALSE,
+                           color = "gray35", fontface = "italic", size = 3,
+                           bg.color = "white", bg.r = 0.15,
+                           segment.color = "gray65", segment.size = 0.3,
+                           min.segment.length = 0, box.padding = 0.6, point.padding = 0.3,
+                           force = 8, max.iter = 10000, max.overlaps = Inf, seed = 42) +
   geom_point(aes(fill = previous1_mm, shape = Type),
              size = 6, color = "black", stroke = 0.6) +
-  scale_shape_manual(values = c(Reserve = 22, Fragment = 21),
+  scale_shape_manual(values = c(Reserve = 24, Fragment = 21),
                      name = "Site type") +
   scale_fill_distiller(palette = "YlGn", direction = 1,
                        name = "WPy0-1 (mm)") +
@@ -339,26 +373,50 @@ print(adon_year)
 # SECTION 8 — Sensitivity: additional precipitation lags
 # =============================================================================
 
+# --- Candidate models for lag-sensitivity analysis --------------------------
+# RECONSTRUCTED: this object was missing from the script entirely. Based on
+# the stated purpose in the script header ("sensitivity analysis with
+# additional precipitation lags") and the Methods description already in
+# Appendix S1 ("Additional two- and three-year precipitation lags were added
+# individually or in combination"), this tests whether adding WPy0-2 and/or
+# WPy0-3 to the base model (Type + same + previous1) meaningfully changes
+# RDA support, beyond the base WPy0/WPy0-1 model already reported as
+# mod_main in Section 4.
+#
+# NOTE: re-run and compare output against your existing Table S11/S12
+# sensitivity panel in Appendix S1 to confirm it matches whatever generated
+# those original numbers -- the exact formula set may differ slightly.
 sens_forms <- list(
-  base          = spec_h_rate ~ Type + same + previous1,
-  add_prev2     = spec_h_rate ~ Type + same + previous1 + previous2,
-  add_prev3     = spec_h_rate ~ Type + same + previous1 + previous3,
-  prev1_prev2   = spec_h_rate ~ Type + same + previous1 + previous2,
-  prev2_prev3   = spec_h_rate ~ Type + same + previous1 + previous2 + previous3
+  "Base (WPy0-1 only)" = spec_h_rate ~ Type + same + previous1,
+  "+ WPy0-2"            = spec_h_rate ~ Type + same + previous1 + previous2,
+  "+ WPy0-3"            = spec_h_rate ~ Type + same + previous1 + previous3,
+  "+ WPy0-2 + WPy0-3"   = spec_h_rate ~ Type + same + previous1 + previous2 + previous3
 )
 
 sens_out <- lapply(names(sens_forms), function(nm) {
   m <- rda(sens_forms[[nm]], data = env_stand)
-  global <- anova(m, permutations = 999) %>%
+  
+  global <- anova(m, permutations = perm_year_rda) %>%
     as.data.frame() %>% rownames_to_column("Row") %>%
     mutate(model = nm, .before = 1) %>%
     rename(p_value = `Pr(>F)`)
-  terms <- anova(m, by = "terms", permutations = 999) %>%
+  
+  terms <- anova(m, by = "terms", permutations = perm_year_rda) %>%
     as.data.frame() %>% rownames_to_column("Term") %>%
     mutate(model = nm, .before = 1) %>%
     rename(p_value = `Pr(>F)`)
+  
   overview <- tibble(model = nm, adj_R2 = RsquareAdj(m)$adj.r.squared)
-  list(overview = overview, global = global, terms = terms)
+  
+  # VIF for each predictor in this model
+  vif_vals <- vegan::vif.cca(m)
+  vif_tbl  <- tibble(
+    model     = nm,
+    predictor = names(vif_vals),
+    VIF       = as.numeric(vif_vals)
+  )
+  
+  list(overview = overview, global = global, terms = terms, vif = vif_tbl)
 })
 names(sens_out) <- names(sens_forms)
 
@@ -366,7 +424,8 @@ writexl::write_xlsx(
   list(
     overview   = bind_rows(lapply(sens_out, `[[`, "overview")),
     global     = bind_rows(lapply(sens_out, `[[`, "global")),
-    term_tests = bind_rows(lapply(sens_out, `[[`, "terms"))
+    term_tests = bind_rows(lapply(sens_out, `[[`, "terms")),
+    VIF        = bind_rows(lapply(sens_out, `[[`, "vif"))
   ),
   file.path(results_dir, "Table_S_RDA_sensitivity.xlsx")
 )
@@ -381,17 +440,17 @@ writexl::write_xlsx(
                         n_species = ncol(spec_h_rate),
                         adj_R2    = RsquareAdj(mod_main)$adj.r.squared),
     global     = a_global %>% as.data.frame() %>%
-                   rownames_to_column("Row") %>% rename(p_value = `Pr(>F)`),
+      rownames_to_column("Row") %>% rename(p_value = `Pr(>F)`),
     axes       = a_axes  %>% as.data.frame() %>%
-                   rownames_to_column("Axis") %>% rename(p_value = `Pr(>F)`),
+      rownames_to_column("Axis") %>% rename(p_value = `Pr(>F)`),
     terms      = a_terms %>% as.data.frame() %>%
-                   rownames_to_column("Term") %>% rename(p_value = `Pr(>F)`),
+      rownames_to_column("Term") %>% rename(p_value = `Pr(>F)`),
     VIFs       = tibble(Predictor = names(vif.cca(mod_main)),
                         VIF       = as.numeric(vif.cca(mod_main))),
     PERMANOVA_plot = adon_plot %>% as.data.frame() %>%
-                       rownames_to_column("Term") %>% rename(p_value = `Pr(>F)`),
+      rownames_to_column("Term") %>% rename(p_value = `Pr(>F)`),
     PERMANOVA_year = adon_year %>% as.data.frame() %>%
-                       rownames_to_column("Term") %>% rename(p_value = `Pr(>F)`)
+      rownames_to_column("Term") %>% rename(p_value = `Pr(>F)`)
   ),
   file.path(results_dir, "Table_S_RDA_results.xlsx")
 )
@@ -421,7 +480,7 @@ run_indval_precip <- function(env_data, spec_mat,
                               nperm = 1200, seed = 1) {
   wet_years <- as.character(wet_years)
   dry_years <- as.character(dry_years)
-
+  
   sub_env <- env_data %>%
     as.data.frame() %>%
     rownames_to_column("plot_year") %>%
@@ -433,21 +492,21 @@ run_indval_precip <- function(env_data, spec_mat,
     ) %>%
     column_to_rownames("plot_year") %>%
     droplevels()
-
+  
   keep_ids <- intersect(rownames(spec_mat), rownames(sub_env))
   sub_env  <- sub_env[keep_ids, , drop = FALSE]
   sub_comm <- spec_mat[keep_ids, , drop = FALSE]
   stopifnot(identical(rownames(sub_env), rownames(sub_comm)))
-
+  
   nz_cols <- colSums(sub_comm, na.rm = TRUE) > 0
   sub_mat <- as.matrix(sub_comm[, nz_cols, drop = FALSE])
   storage.mode(sub_mat) <- "double"
-
+  
   set.seed(seed)
   ind_res <- multipatt(sub_mat, sub_env$group,
                        func = "IndVal.g", duleg = FALSE,
                        control = how(nperm = nperm))
-
+  
   list(ind_res     = ind_res,
        sub_env     = sub_env,
        group_sizes = table(sub_env$group),
@@ -480,7 +539,7 @@ add_traits <- function(sig_df, traits_tbl, trait_species_col) {
 }
 
 make_euler_from_sig <- function(sig_df,
-  sets = c("Fragment_Dry","Fragment_Wet","Reserve_Dry","Reserve_Wet")) {
+                                sets = c("Fragment_Dry","Fragment_Wet","Reserve_Dry","Reserve_Wet")) {
   stopifnot(all(sets %in% colnames(sig_df)))
   set_list <- lapply(sets, function(g)
     unique(sig_df$species[sig_df[[g]] > 0]))
@@ -560,3 +619,217 @@ save_euler_png(venn_same,
 save_euler_png(venn_prev,
                file.path(figures_dir, "indicator_euler_previous.png"))
 
+# get counts for all combinations
+# ── Species sets ──────────────────────────────────────────────────────────────
+same_sp <- unique(same_sig$species)
+prev_sp <- unique(prev_sig$species)
+
+# Groups within same_sig
+same_frag_dry  <- same_sig$species[same_sig$Fragment_Dry  == 1]
+same_frag_wet  <- same_sig$species[same_sig$Fragment_Wet  == 1]
+same_res_dry   <- same_sig$species[same_sig$Reserve_Dry   == 1]
+same_res_wet   <- same_sig$species[same_sig$Reserve_Wet   == 1]
+
+# Groups within prev_sig
+prev_frag_dry  <- prev_sig$species[prev_sig$Fragment_Dry  == 1]
+prev_frag_wet  <- prev_sig$species[prev_sig$Fragment_Wet  == 1]
+prev_res_dry   <- prev_sig$species[prev_sig$Reserve_Dry   == 1]
+prev_res_wet   <- prev_sig$species[prev_sig$Reserve_Wet   == 1]
+
+# ── Counts ────────────────────────────────────────────────────────────────────
+count_summary <- tribble(
+  ~Region,                              ~N,
+  # Top-level overlap
+  "Same only",                          length(setdiff(same_sp, prev_sp)),
+  "Previous only",                      length(setdiff(prev_sp, same_sp)),
+  "Same & Previous",                    length(intersect(same_sp, prev_sp)),
+  
+  # Within Same — by group
+  "Same: Fragment Dry only",            length(setdiff(same_frag_dry,  c(same_frag_wet, same_res_dry, same_res_wet))),
+  "Same: Fragment Wet only",            length(setdiff(same_frag_wet,  c(same_frag_dry, same_res_dry, same_res_wet))),
+  "Same: Reserve Dry only",             length(setdiff(same_res_dry,   c(same_frag_dry, same_frag_wet, same_res_wet))),
+  "Same: Reserve Wet only",             length(setdiff(same_res_wet,   c(same_frag_dry, same_frag_wet, same_res_dry))),
+  "Same: Frag Dry & Frag Wet",          length(intersect(same_frag_dry,  same_frag_wet)),
+  "Same: Frag Dry & Res Dry",           length(intersect(same_frag_dry,  same_res_dry)),
+  "Same: Frag Dry & Res Wet",           length(intersect(same_frag_dry,  same_res_wet)),
+  "Same: Frag Wet & Res Dry",           length(intersect(same_frag_wet,  same_res_dry)),
+  "Same: Frag Wet & Res Wet",           length(intersect(same_frag_wet,  same_res_wet)),
+  "Same: Res Dry & Res Wet",            length(intersect(same_res_dry,   same_res_wet)),
+  "Same: all 4 groups",                 length(Reduce(intersect, list(same_frag_dry, same_frag_wet, same_res_dry, same_res_wet))),
+  
+  # Within Previous — by group
+  "Prev: Fragment Dry only",            length(setdiff(prev_frag_dry,  c(prev_frag_wet, prev_res_dry, prev_res_wet))),
+  "Prev: Fragment Wet only",            length(setdiff(prev_frag_wet,  c(prev_frag_dry, prev_res_dry, prev_res_wet))),
+  "Prev: Reserve Dry only",             length(setdiff(prev_res_dry,   c(prev_frag_dry, prev_frag_wet, prev_res_wet))),
+  "Prev: Reserve Wet only",             length(setdiff(prev_res_wet,   c(prev_frag_dry, prev_frag_wet, prev_res_dry))),
+  "Prev: Frag Dry & Frag Wet",          length(intersect(prev_frag_dry,  prev_frag_wet)),
+  "Prev: Frag Dry & Res Dry",           length(intersect(prev_frag_dry,  prev_res_dry)),
+  "Prev: Frag Dry & Res Wet",           length(intersect(prev_frag_dry,  prev_res_wet)),
+  "Prev: Frag Wet & Res Dry",           length(intersect(prev_frag_wet,  prev_res_dry)),
+  "Prev: Frag Wet & Res Wet",           length(intersect(prev_frag_wet,  prev_res_wet)),
+  "Prev: Res Dry & Res Wet",            length(intersect(prev_res_dry,   prev_res_wet)),
+  "Prev: all 4 groups",                 length(Reduce(intersect, list(prev_frag_dry, prev_frag_wet, prev_res_dry, prev_res_wet)))
+)
+
+print(count_summary, n = Inf)
+
+# let's save the list of indicator spp for downstream analyses
+# ── Previous-year indicator species list ─────────────────────────────────────
+
+prev_indicators <- sort(unique(gsub("_", " ", prev_sig$species)))
+
+cat("Previous-year indicators (n =", length(prev_indicators), "):\n")
+cat(paste0('"', prev_indicators, '"', collapse = ",\n"), "\n\n")
+
+saveRDS(prev_indicators, file.path(cleaned_dir, "indicator_species.rds"))
+
+# ── % of occurrences that were indicator species ─────────────────────────────
+
+total_occurrences <- nrow(df_analysis)
+indicator_occurrences <- sum(df_analysis$scientificName %in% indicators)
+
+pct_indicators <- (indicator_occurrences / total_occurrences) * 100
+
+cat("Total occurrences:          ", total_occurrences, "\n")
+cat("Indicator spp occurrences:  ", indicator_occurrences, "\n")
+cat("% indicator occurrences:    ", round(pct_indicators, 1), "%\n")
+
+# =============================================================================
+# SECTION 11 — Variance decomposition: wet vs. dry years (WPy0-1)
+#
+# Reviewer request: quantify how much of the spread in WPy0-1 is explained
+# by the wet/dry grouping used in the indicator species analysis, vs. left
+# over as within-group variance. Uses the same prev_wet_years/prev_dry_years
+# grouping already defined above (Section 10).
+# =============================================================================
+
+wetdry_precip <- precip %>%
+  mutate(year_chr = as.character(year)) %>%
+  filter(year_chr %in% c(prev_wet_years, prev_dry_years)) %>%
+  mutate(group = if_else(year_chr %in% prev_wet_years, "Wet", "Dry")) %>%
+  dplyr::select(year_chr, group, previous1)
+
+print(wetdry_precip)
+
+aov_wetdry <- aov(previous1 ~ group, data = wetdry_precip)
+print(summary(aov_wetdry))
+
+# % variance explained: between-group (Wet vs. Dry) vs. within-group (residual)
+ss <- summary(aov_wetdry)[[1]][["Sum Sq"]]
+variance_tbl <- tibble(
+  source  = c("Between groups (Wet vs. Dry)", "Within groups (residual)"),
+  sum_sq  = ss,
+  pct_var = round(100 * ss / sum(ss), 2)
+)
+print(variance_tbl)
+
+cat("\nWPy0-1 by group (mean \u00b1 SD):\n")
+wetdry_precip %>%
+  group_by(group) %>%
+  summarise(mean_previous1 = mean(previous1), sd_previous1 = sd(previous1),
+            .groups = "drop") %>%
+  print()
+
+
+
+
+
+# Run in your R-06 session (needs prev_sig, and the same_frag_dry/wet,
+# same_res_dry/wet etc. group-membership vectors already built for the
+# Euler diagram / count_summary).
+
+# ---- 1) Full species list with group memberships (WPy0-1 / prev_sig) -----
+cat("=== Full indicator species list (WPy0-1), n =", n_distinct(prev_sig$species), "===\n")
+print(prev_sig %>%
+        select(species, Fragment_Dry, Fragment_Wet, Reserve_Dry, Reserve_Wet, IndVal, P_value) %>%
+        arrange(species), n = Inf)
+
+# ---- 2) Species names for each Euler region (for eyeballing against the figure) --
+cat("\n--- Reserve-Wet ONLY ---\n")
+print(setdiff(prev_res_wet, c(prev_res_dry, prev_frag_dry, prev_frag_wet)))
+
+cat("\n--- Reserve-Dry ONLY ---\n")
+print(setdiff(prev_res_dry, c(prev_res_wet, prev_frag_dry, prev_frag_wet)))
+
+cat("\n--- Fragment-Wet ONLY ---\n")
+print(setdiff(prev_frag_wet, c(prev_res_wet, prev_res_dry, prev_frag_dry)))
+
+cat("\n--- Fragment-Dry ONLY ---\n")
+print(setdiff(prev_frag_dry, c(prev_res_wet, prev_res_dry, prev_frag_wet)))
+
+cat("\n--- Reserve-Wet & Reserve-Dry (both, no fragment) ---\n")
+print(setdiff(intersect(prev_res_wet, prev_res_dry), c(prev_frag_dry, prev_frag_wet)))
+
+cat("\n--- Reserve-Wet & Fragment-Dry (no other) ---\n")
+print(setdiff(intersect(prev_res_wet, prev_frag_dry), c(prev_res_dry, prev_frag_wet)))
+
+cat("\n--- Reserve-Dry & Fragment-Dry (no other) ---\n")
+print(setdiff(intersect(prev_res_dry, prev_frag_dry), c(prev_res_wet, prev_frag_wet)))
+
+cat("\n--- Fragment-Dry & Fragment-Wet (no reserve) ---\n")
+print(setdiff(intersect(prev_frag_dry, prev_frag_wet), c(prev_res_wet, prev_res_dry)))
+
+cat("\n--- Reserve-Dry & Fragment-Wet (no other) ---\n")
+print(setdiff(intersect(prev_res_dry, prev_frag_wet), c(prev_res_wet, prev_frag_dry)))
+
+cat("\n--- Reserve-Wet & Fragment-Wet (no other) ---\n")
+print(setdiff(intersect(prev_res_wet, prev_frag_wet), c(prev_res_dry, prev_frag_dry)))
+
+cat("\n--- All 4 groups ---\n")
+print(Reduce(intersect, list(prev_frag_dry, prev_frag_wet, prev_res_dry, prev_res_wet)))
+
+# ---- 3) Sanity check: do the region counts sum to the total unique species? ----
+region_counts <- c(
+  reserve_wet_only  = length(setdiff(prev_res_wet, c(prev_res_dry, prev_frag_dry, prev_frag_wet))),
+  reserve_dry_only  = length(setdiff(prev_res_dry, c(prev_res_wet, prev_frag_dry, prev_frag_wet))),
+  frag_wet_only     = length(setdiff(prev_frag_wet, c(prev_res_wet, prev_res_dry, prev_frag_dry))),
+  frag_dry_only     = length(setdiff(prev_frag_dry, c(prev_res_wet, prev_res_dry, prev_frag_wet))),
+  res_wet_res_dry   = length(setdiff(intersect(prev_res_wet, prev_res_dry), c(prev_frag_dry, prev_frag_wet))),
+  res_wet_frag_dry  = length(setdiff(intersect(prev_res_wet, prev_frag_dry), c(prev_res_dry, prev_frag_wet))),
+  res_dry_frag_dry  = length(setdiff(intersect(prev_res_dry, prev_frag_dry), c(prev_res_wet, prev_frag_wet))),
+  frag_dry_frag_wet = length(setdiff(intersect(prev_frag_dry, prev_frag_wet), c(prev_res_wet, prev_res_dry))),
+  res_dry_frag_wet  = length(setdiff(intersect(prev_res_dry, prev_frag_wet), c(prev_res_wet, prev_frag_dry))),
+  res_wet_frag_wet  = length(setdiff(intersect(prev_res_wet, prev_frag_wet), c(prev_res_dry, prev_frag_dry))),
+  all_four          = length(Reduce(intersect, list(prev_frag_dry, prev_frag_wet, prev_res_dry, prev_res_wet)))
+)
+
+cat("\n=== Region counts ===\n")
+print(region_counts)
+cat("\nSum of all regions:", sum(region_counts), "\n")
+cat("Total unique species (n_distinct(prev_sig$species)):", n_distinct(prev_sig$species), "\n")
+cat("Match?", sum(region_counts) == n_distinct(prev_sig$species), "\n")
+
+
+# Corrected: includes the 4 triple-overlap regions missing from the first check
+
+cat("--- Reserve-Wet & Reserve-Dry & Fragment-Dry (not Fragment-Wet) ---\n")
+r1 <- setdiff(Reduce(intersect, list(prev_res_wet, prev_res_dry, prev_frag_dry)), prev_frag_wet)
+print(r1)
+
+cat("\n--- Reserve-Wet & Reserve-Dry & Fragment-Wet (not Fragment-Dry) ---\n")
+r2 <- setdiff(Reduce(intersect, list(prev_res_wet, prev_res_dry, prev_frag_wet)), prev_frag_dry)
+print(r2)
+
+cat("\n--- Reserve-Wet & Fragment-Dry & Fragment-Wet (not Reserve-Dry) ---\n")
+r3 <- setdiff(Reduce(intersect, list(prev_res_wet, prev_frag_dry, prev_frag_wet)), prev_res_dry)
+print(r3)
+
+cat("\n--- Reserve-Dry & Fragment-Dry & Fragment-Wet (not Reserve-Wet) ---\n")
+r4 <- setdiff(Reduce(intersect, list(prev_res_dry, prev_frag_dry, prev_frag_wet)), prev_res_wet)
+print(r4)
+
+triple_counts <- c(
+  res_wet_res_dry_frag_dry = length(r1),
+  res_wet_res_dry_frag_wet = length(r2),
+  res_wet_frag_dry_frag_wet = length(r3),
+  res_dry_frag_dry_frag_wet = length(r4)
+)
+
+cat("\n=== Triple-overlap counts ===\n")
+print(triple_counts)
+
+cat("\nSum of original 11 regions: 39\n")
+cat("Sum of triple overlaps:", sum(triple_counts), "\n")
+cat("New total:", 39 + sum(triple_counts), "\n")
+cat("Target (n_distinct(prev_sig$species)): 47\n")
+cat("Match?", (39 + sum(triple_counts)) == 47, "\n")

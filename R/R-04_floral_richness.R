@@ -7,6 +7,12 @@
 ##           interaction across five survey years (2015, 2016, 2022, 2023,
 ##           2024). Also tests EVI as a predictor of floral richness.
 ##
+##           Reviewer-requested addition: tests whether plant community
+##           COMPOSITION (not just richness) differs between site types,
+##           following the presence-absence PERMANOVA / multivariate
+##           dispersion approach of Hung, Ascher & Holway 2017 (PLoS ONE,
+##           S1 Appendix).
+##
 ## Inputs  : data/raw/all_plants.csv       — plant occurrence records; curated
 ##                                           from field surveys and iNaturalist
 ##                                           observations. Plants from 2022–2024
@@ -20,14 +26,17 @@
 ##           data/raw/wild_evi.csv         — MODIS EVI (from GEE)
 ##
 ## Outputs : figures/floral_richness.svg          — richness by year + site type
+##           figures/plant_community_nmds.svg      — NMDS ordination by site type
 ##           results/plant_models_results.xlsx     — model summaries, ANOVA,
-##                                                   emmeans contrasts
+##                                                   emmeans contrasts, and
+##                                                   composition analysis results
 ##
-## Author  : [Your name]
-## Date    : [Date]
+## Author  : Jess Mullins
+## Date    : April 8, 2026, updated August 24, 2026
 ## =============================================================================
 
 library(dplyr)
+library(tidyr)
 library(tibble)
 library(readr)
 library(forcats)
@@ -39,6 +48,7 @@ library(influence.ME)
 library(car)
 library(ggplot2)
 library(openxlsx)
+library(vegan)
 
 ## File paths
 figures_dir <- "figures"
@@ -62,9 +72,41 @@ survey_years <- c(2015, 2016, 2022, 2023, 2024)
 dat <- all_plants %>%
   left_join(plots_raw, by = c("plot" = "fieldNumber")) %>%
   filter(!is.na(sp.code),
-         !plot %in% c("SWS10", "SCR"),
+         !plot %in% c("SWS10", "SCR", "TRR1", "TRS1"),
          !is.na(plot),
          !is.na(year))
+
+# =============================================================================
+# SECTION 1b — Species-code cleanup
+#
+# Applied once here, before any downstream use of sp.code, so it propagates
+# consistently through the richness model AND the composition analysis.
+#   - Typo/synonym corrections (same species, misspelled/duplicated).
+#   - Sink certain species-level IDs to genus level (taxonomic resolution
+#     calls, e.g. field IDs too uncertain to trust at species level).
+#   - Drop genus-only-only records that are redundant with existing
+#     species-level IDs of the same genus (species-level rows are kept).
+# =============================================================================
+
+dat <- dat %>%
+  mutate(sp.code = case_when(
+    # typo/synonym corrections
+    sp.code == "Anagalis.arvensis"      ~ "Anagallis.arvensis",
+    sp.code == "Chaenactis.gabriuscula" ~ "Chaenactis.glabriuscula",
+    
+    # sink to genus level
+    grepl("^Raphanus\\.",       sp.code) ~ "Raphanus",
+    grepl("^Castilleja\\.",     sp.code) ~ "Castilleja",
+    grepl("^Oxalis\\.",         sp.code) ~ "Oxalis",
+    grepl("^Sisymbrium",        sp.code) ~ "Sisymbrium",   # catches "Sisymbrium.cf. irio" too
+    grepl("^Toxicoscordion\\.", sp.code) ~ "Toxicoscordion",
+    
+    TRUE ~ sp.code
+  )) %>%
+  filter(!sp.code %in% c("Acmispon", "Eriogonum"))  # drop redundant genus-only-only records
+
+cat("Species-code cleanup applied. Distinct sp.code remaining:",
+    n_distinct(dat$sp.code), "\n")
 
 # =============================================================================
 # SECTION 2 — Calculate mean floral richness per plot-year
@@ -107,7 +149,7 @@ plot_dat <- sp_per_plot_year %>%
 # Figure
 p_richness <- ggplot(plot_dat, aes(x = year_f, y = mean_richness)) +
   geom_boxplot(aes(fill = Type),
-               outlier.shape = NA, width = 0.6, color = "gray40",
+               outlier.shape = NA, width = 0.6, color = "black", linewidth = 0.4,
                position = position_dodge2(width = 0.65, preserve = "single")) +
   scale_fill_manual(values = c(Reserve = "#2C7C4D", Fragment = "#BDBDBD")) +
   scale_y_continuous(name = "Mean floral species richness") +
@@ -147,7 +189,7 @@ emmeans(m_richness, pairwise ~ year_f | Type)
 
 evi_clean <- evi %>%
   as.data.frame() %>%
-  select(year, mean_EVI) %>%
+  dplyr::select(year, mean_EVI) %>%
   distinct(year, .keep_all = TRUE)
 
 plot_dat_evi <- plot_dat %>%
@@ -155,14 +197,127 @@ plot_dat_evi <- plot_dat %>%
 
 stopifnot(!anyNA(plot_dat_evi$mean_EVI))
 
-m_evi <- lmer(mean_richness ~ Type * mean_EVI + (1 | plot),
+m_evi <- lmer(mean_richness ~ Type * mean_EVI + (1|year) + (1 | plot),
               data = plot_dat_evi)
 
 summary(m_evi)
 car::Anova(m_evi, type = "III")
 
+# --- Comparison: with vs. without year as a random effect ------------------
+# EVI is a year-level variable (identical value for every site in a given
+# year), so treating site-years as fully independent overstates the
+# effective sample size for the EVI effect (same pseudoreplication concern
+# as the bee diversity and body size models). (1 | year) is the fix -- note
+# this is a RANDOM effect, not fixed: a fixed year term would alias with
+# EVI (this is the reason year was originally excluded, per the Methods),
+# but a random year effect does not, since it is constrained to a single
+# variance parameter rather than free dummy coefficients that could
+# perfectly reconstruct EVI's year-to-year pattern.
+m_evi_noyear <- lmer(mean_richness ~ Type * mean_EVI + (1 | plot),
+                     data = plot_dat_evi)
+cat("\nSingular fit (no-year model)?", lme4::isSingular(m_evi_noyear), "\n")
+cat("Singular fit (+year model)?    ", lme4::isSingular(m_evi), "\n")
+
+anova_evi_noyear <- car::Anova(m_evi_noyear, type = "III")
+anova_evi_year   <- car::Anova(m_evi,        type = "III")
+
+compare_evi <- {
+  a1 <- as.data.frame(anova_evi_noyear) %>% tibble::rownames_to_column("term")
+  a2 <- as.data.frame(anova_evi_year)   %>% tibble::rownames_to_column("term")
+  dplyr::full_join(
+    a1 %>% dplyr::select(term, Chisq_no_year = Chisq, P_no_year = `Pr(>Chisq)`),
+    a2 %>% dplyr::select(term, Chisq_with_year = Chisq, P_with_year = `Pr(>Chisq)`),
+    by = "term"
+  )
+}
+cat("\n--- Floral richness ~ Type * EVI: with vs. without year as random effect ---\n")
+print(compare_evi)
+
 # =============================================================================
-# SECTION 5 — Export model results
+# SECTION 5 — Plant community COMPOSITION by site type (reviewer request)
+#
+# Richness alone (Sections 2-4) doesn't tell us whether reserve and
+# fragment plant assemblages are made of the same species. Follows Hung et
+# al. 2017 (PLoS ONE, S1 Appendix): presence-absence (not abundance, which
+# isn't reliably comparable across plant sizes/species), Bray-Curtis,
+# PERMANOVA + multivariate dispersion. Reuses `dat` (cleaned, Section 1b),
+# pooled across all survey years (one row per plot).
+# =============================================================================
+
+set.seed(816)
+
+comm_wide <- dat %>%
+  distinct(plot, Type, sp.code) %>%
+  mutate(present = 1L) %>%
+  pivot_wider(names_from = sp.code, values_from = present, values_fill = 0L)
+
+plot_meta <- comm_wide %>% dplyr::select(plot, Type)
+comm_mat  <- comm_wide %>% dplyr::select(-plot, -Type) %>% as.matrix()
+rownames(comm_mat) <- plot_meta$plot
+comm_mat  <- comm_mat[, colSums(comm_mat) > 0, drop = FALSE]
+
+cat("\nCommunity matrix:", nrow(comm_mat), "plots x", ncol(comm_mat), "species\n")
+
+# NMDS
+nmds_fit <- metaMDS(comm_mat, distance = "bray", k = 2, trymax = 100,
+                    autotransform = FALSE, trace = FALSE)
+cat("NMDS stress:", round(nmds_fit$stress, 3), "\n")
+
+site_scores <- as.data.frame(scores(nmds_fit, display = "sites")) %>%
+  rownames_to_column("plot") %>%
+  left_join(plot_meta, by = "plot")
+
+centroids <- site_scores %>%
+  dplyr::group_by(Type) %>%
+  dplyr::summarise(NMDS1 = mean(NMDS1), NMDS2 = mean(NMDS2), .groups = "drop")
+
+p_nmds <- ggplot(site_scores, aes(NMDS1, NMDS2, color = Type, fill = Type, shape = Type)) +
+  stat_ellipse(geom = "polygon", alpha = 0.15, level = 0.95) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_point(data = centroids, size = 6, stroke = 1.1, color = "black") +
+  scale_color_manual(values = c(Reserve = "#2C7C4D", Fragment = "#BDBDBD")) +
+  scale_fill_manual(values  = c(Reserve = "#2C7C4D", Fragment = "#BDBDBD")) +
+  scale_shape_manual(values = c(Reserve = 24, Fragment = 21)) +   # Reserve = triangle, Fragment = circle
+  labs(subtitle = paste0("NMDS stress = ", round(nmds_fit$stress, 3)),
+       color = "Site type", fill = "Site type", shape = "Site type") +
+  theme_classic(base_size = 13)
+
+print(p_nmds)
+ggsave(file.path(figures_dir, "plant_community_nmds.svg"),
+       plot = p_nmds, width = 5.5, height = 5, units = "in")
+
+# PERMANOVA
+dist_mat <- vegdist(comm_mat, method = "bray")
+permanova_result <- adonis2(dist_mat ~ Type, data = plot_meta, permutations = 999)
+cat("\n--- PERMANOVA: composition ~ Type ---\n")
+print(permanova_result)
+
+# Multivariate dispersion
+betadisper_result <- betadisper(dist_mat, plot_meta$Type)
+betadisper_test    <- permutest(betadisper_result, permutations = 999)
+cat("\n--- Multivariate dispersion by Type ---\n")
+print(betadisper_test)
+
+# Species-level taxa found in only one site type (genus-only codes excluded --
+# ambiguous, not confirmed distinct taxa; see Section 1b)
+sp_type_presence <- dat %>%
+  filter(grepl("\\.", sp.code)) %>%
+  distinct(sp.code, Type) %>%
+  count(sp.code, name = "n_types")
+
+single_type_species <- dat %>%
+  filter(grepl("\\.", sp.code)) %>%
+  distinct(sp.code, Type) %>%
+  semi_join(sp_type_presence %>% filter(n_types == 1), by = "sp.code") %>%
+  arrange(Type, sp.code)
+
+cat("\n--- Species-level taxa found in only ONE site type ---\n")
+print(single_type_species %>% count(Type, name = "n_species_unique_to_type"))
+cat("\n")
+print(single_type_species, n = Inf)
+
+# =============================================================================
+# SECTION 6 — Export all model + composition results to a single workbook
 # =============================================================================
 
 tidy_lmer <- function(mod) {
@@ -192,5 +347,20 @@ writeData(wb, "EVI_Summary", tidy_lmer(m_evi))
 addWorksheet(wb, "EVI_Anova")
 writeData(wb, "EVI_Anova", as.data.frame(car::Anova(m_evi, type = "III")))
 
+addWorksheet(wb, "EVI_YearRE_Comparison")
+writeData(wb, "EVI_YearRE_Comparison", compare_evi)
+
+addWorksheet(wb, "Composition_PERMANOVA")
+writeData(wb, "Composition_PERMANOVA", as.data.frame(permanova_result))
+
+addWorksheet(wb, "Composition_Betadisper")
+writeData(wb, "Composition_Betadisper", as.data.frame(betadisper_test$tab))
+
+addWorksheet(wb, "Composition_UniqueSpecies")
+writeData(wb, "Composition_UniqueSpecies", single_type_species)
+
 saveWorkbook(wb, file.path(results_dir, "plant_models_results.xlsx"),
              overwrite = TRUE)
+
+cat("\nAll results written to",
+    file.path(results_dir, "plant_models_results.xlsx"), "\n")
